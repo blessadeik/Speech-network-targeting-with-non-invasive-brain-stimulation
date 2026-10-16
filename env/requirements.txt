@@ -1,0 +1,16 @@
+# Analysis-side Python deps (install INTO the SimNIBS bundled interpreter:
+#   simnibs_python -m pip install -r env/requirements.txt
+# SimNIBS itself is installed via its own bundle installer — see docs/06_environment_setup.md).
+#
+# Pin exact versions once your toolchain is confirmed (fill after Week 1).
+numpy
+scipy
+pandas
+pyyaml
+matplotlib
+seaborn
+statsmodels
+# optional: mixed models via R/lme4 bridge
+# pymer4
+# optional: nicer neuro I/O if needed outside SimNIBS
+nibabel

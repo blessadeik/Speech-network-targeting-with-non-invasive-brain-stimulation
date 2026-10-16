@@ -1,0 +1,17 @@
+# Project paths (relative to repo root). Scripts resolve these via utils.load_paths().
+data:
+  raw_mri:  data/raw_mri        # input T1/T2 per subject
+  m2m:      data/m2m            # charm head models (m2m_<subject>)
+  external: data/external       # templates, downloaded atlases, coil files if custom
+results:
+  tdcs:        results/tdcs
+  tms:         results/tms
+  leadfield:   results/leadfield
+  optimization: results/optimization
+  roi_metrics: results/roi_metrics
+  group:       results/group
+  figures:     results/figures
+config:
+  rois:     config/rois.yaml
+  montages: config/montages.yaml
+  coils:    config/coils.yaml

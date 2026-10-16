@@ -1,0 +1,36 @@
+# TMS coil configurations. See docs/04_methods_protocol.md §TMS.
+# Coil filenames must match files in your SimNIBS coil library (ccd/tcd). Verify exact
+# names in your install (simnibs coil folder). Distance = coil-to-scalp in mm.
+
+defaults:
+  coil_to_scalp_mm: 4
+  didt_A_per_us: 1.0            # reference dI/dt for reporting V/m (state convention in paper)
+
+coils:
+  figure8:
+    fnamecoil: "Magstim_70mm_Fig8.ccd"    # VERIFY exact filename in your SimNIBS coil dir
+    type: focal
+    use_for: [L_IFG, L_pSTG, L_LMC_dorsal, L_LMC_ventral]
+
+  double_cone:
+    fnamecoil: "MagVenture_MCF-B65.ccd"    # VERIFY / substitute a genuine deep/double-cone coil
+    type: deep
+    use_for: [L_LMC_dorsal, L_LMC_ventral] # depth/focality trade-off for LMC
+
+# Fixed position+orientation grid search (per ROI). Orientation = angle of coil handle /
+# induced-current direction, degrees. Position grid centered on the ROI-projected scalp point.
+grid_search:
+  search_radius_mm: 20          # extent of position grid over scalp
+  spatial_resolution_mm: 5      # position step
+  orientations_deg: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
+  quick:                        # smoke-test settings (s04 --quick)
+    search_radius_mm: 0         # single position (ROI projection)
+    orientations_deg: [45, 135]
+
+# Formal optimization (SimNIBS TMSoptimize). See s06_optimize_tms.py.
+optimization:
+  search_radius_mm: 20
+  spatial_resolution_mm: 4
+  search_angle_deg: 360
+  angle_resolution_deg: 15
+  run_for_rois: [L_IFG, L_pSTG, L_LMC_dorsal, L_LMC_ventral]

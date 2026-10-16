@@ -1,0 +1,95 @@
+# tDCS montage battery. See docs/04_methods_protocol.md §tDCS.
+# Electrode centres use EEG 10-10 labels where possible (SimNIBS understands them) or
+# subject/MNI coordinates. Currents in mA (converted to A in code). Anode current positive.
+#
+# Naming: <family>_<roi>. Each montage lists electrodes with channel, centre, shape, size.
+
+defaults:
+  reference_current_mA: 2.0     # common injected current for fixed montages
+  pad_shape: rect
+  pad_dimensions_mm: [50, 50]   # 5x5 cm
+  pad_thickness_mm: 5
+  hd_shape: ellipse
+  hd_dimensions_mm: [12, 12]    # small HD electrode (~1 cm)
+  hd_thickness_mm: 5
+  report_per_mA: true           # also normalize outputs to V/m per mA
+
+montages:
+
+  # ---- L-IFG (Broca's) ----
+  conventional_ifg:
+    roi: L_IFG
+    family: conventional_bipolar
+    electrodes:
+      - {channel: 1, centre: F5,  current_mA:  2.0, shape: rect, dimensions_mm: [50,50]}  # anode ~IFG. VERIFY landmark
+      - {channel: 2, centre: FP2, current_mA: -2.0, shape: rect, dimensions_mm: [50,50]}  # contralateral supraorbital return
+
+  hd_4x1_ifg:
+    roi: L_IFG
+    family: hd_tdcs
+    electrodes:
+      - {channel: 1, centre: F5,  current_mA:  2.0, shape: ellipse, dimensions_mm: [12,12]}  # center anode
+      - {channel: 2, centre: F3,  current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}  # 4 surround returns
+      - {channel: 2, centre: F7,  current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: FC5, current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: AF7, current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+
+  bilateral_ifg:
+    roi: L_IFG
+    family: bilateral
+    electrodes:
+      - {channel: 1, centre: F5, current_mA:  2.0, shape: rect, dimensions_mm: [50,50]}   # anode L-IFG
+      - {channel: 2, centre: F6, current_mA: -2.0, shape: rect, dimensions_mm: [50,50]}   # cathode R homolog
+
+  extracephalic_ifg:
+    roi: L_IFG
+    family: extracephalic
+    electrodes:
+      - {channel: 1, centre: F5,          current_mA:  2.0, shape: rect, dimensions_mm: [50,50]}
+      - {channel: 2, centre_coords_mni: [ -80, -60, -120 ], current_mA: -2.0, shape: rect, dimensions_mm: [70,50]}  # VERIFY shoulder/neck coord
+
+  # ---- L-pSTG (Wernicke's) ----
+  conventional_pstg:
+    roi: L_pSTG
+    family: conventional_bipolar
+    electrodes:
+      - {channel: 1, centre: TP7, current_mA:  2.0, shape: rect, dimensions_mm: [50,50]}  # VERIFY landmark (CP5/TP7)
+      - {channel: 2, centre: FP2, current_mA: -2.0, shape: rect, dimensions_mm: [50,50]}
+
+  hd_4x1_pstg:
+    roi: L_pSTG
+    family: hd_tdcs
+    electrodes:
+      - {channel: 1, centre: TP7, current_mA:  2.0, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: CP5, current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: P7,  current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: T7,  current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+      - {channel: 2, centre: TP9, current_mA: -0.5, shape: ellipse, dimensions_mm: [12,12]}
+
+  # ---- L-LMC (laryngeal motor cortex) ----
+  # LMC has no clean 10-10 landmark; anchor the anode on the subject ROI coordinate (code
+  # projects the ROI seed to the nearest scalp point). Returns are landmark-based.
+  hd_4x1_lmc_dorsal:
+    roi: L_LMC_dorsal
+    family: hd_tdcs
+    anchor_on_roi: true            # code places center electrode over projected ROI seed
+    surround_ring_radius_mm: 35
+    center_current_mA: 2.0
+    surround_current_mA: -0.5      # split across 4 surround electrodes
+
+  conventional_lmc_dorsal:
+    roi: L_LMC_dorsal
+    family: conventional_bipolar
+    anchor_on_roi: true
+    return_centre: FP2
+    center_current_mA: 2.0
+    return_current_mA: -2.0
+
+# Formal optimization (leadfield-based). See s05_optimize_tdcs.py.
+optimization:
+  electrode_set: EEG10-10_UI_Jurak_2007   # SimNIBS EEG cap for the leadfield
+  max_total_current_mA: 2.0
+  max_individual_current_mA: 1.0
+  max_active_electrodes: 8
+  target_intensity_Vm: 0.2                 # desired |E| at target (V/m)
+  run_for_rois: [L_IFG, L_pSTG, L_LMC_dorsal, L_LMC_ventral]

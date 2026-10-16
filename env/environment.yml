@@ -1,0 +1,19 @@
+# Optional standalone analysis environment (for stats/figures OUTSIDE SimNIBS).
+# SimNIBS is NOT installed via conda — use its official bundle installer.
+# Use this env only if you prefer to run s07/s08 analysis + plotting separately from
+# simnibs_python. The simulation scripts (s01–s06) must run under simnibs_python.
+name: nibs-speech-analysis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - pyyaml
+  - matplotlib
+  - seaborn
+  - statsmodels
+  - nibabel
+  - jupyterlab
+  - pip

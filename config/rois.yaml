@@ -1,0 +1,51 @@
+# ROI definitions — the single source of truth for targets.
+# See docs/05_roi_definitions.md. Coordinates marked VERIFY must be replaced with
+# literature-sourced MNI values (with citations) BEFORE locking the preregistration.
+#
+# Each ROI is mapped from MNI to subject space via simnibs.mni2subject_coords, then
+# (optionally) intersected with HCP-MMP1 atlas labels on the central GM surface.
+
+space: MNI152
+atlas: HCP_MMP1          # used where labels != null; LMC uses coordinate spheres only
+surface: central          # analyze on mid-cortical GM surface
+hemisphere: left          # target hemisphere (off-target = right homolog)
+
+rois:
+  L_IFG:                  # Broca's area
+    label: "Left IFG (Broca's, pars opercularis + triangularis)"
+    mni_seed: [-48, 16, 18]        # VERIFY against aphasia-NIBS literature
+    radius_mm: 10
+    atlas_labels: ["L_44", "L_45"]  # intersect sphere with these HCP-MMP1 labels
+    clinical_note: "Canonical speech-production / articulatory-planning target."
+
+  L_pSTG:                 # Wernicke's area
+    label: "Left posterior STG (Wernicke's)"
+    mni_seed: [-54, -42, 12]       # VERIFY
+    radius_mm: 10
+    atlas_labels: ["L_A4", "L_A5", "L_STGa"]  # VERIFY label coverage of pSTG
+    clinical_note: "Auditory-linguistic comprehension / phonological feedback."
+
+  L_LMC_dorsal:           # dorsal laryngeal motor cortex — THE DIFFERENTIATOR
+    label: "Left dorsal laryngeal motor cortex (dLMC)"
+    mni_seed: [-99, -99, -99]      # VERIFY — fill from Brown 2008 / Dichter 2018 etc.
+    radius_mm: 8
+    atlas_labels: null             # no dedicated HCP label; coordinate sphere only
+    clinical_note: "Cortical larynx control; speech-motor restoration target."
+
+  L_LMC_ventral:          # ventral laryngeal motor cortex
+    label: "Left ventral laryngeal motor cortex (vLMC)"
+    mni_seed: [-99, -99, -99]      # VERIFY — fill from literature
+    radius_mm: 8
+    atlas_labels: null
+    clinical_note: "Ventral larynx representation."
+
+# Off-target / avoidance regions (metrics computed here too).
+avoidance:
+  contralateral_homologs: true     # auto-generate right-hemisphere mirror of each ROI
+  temporalis_region: true          # lateral temporal scalp/muscle proxy (TMS discomfort)
+  orbit_region: true               # eyes/orbit (anterior tDCS montages)
+
+# Robustness pre-checks (docs/05).
+robustness:
+  seed_shifts_mm: [-5, 0, 5]
+  radii_mm: [8, 10, 12]

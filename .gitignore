@@ -1,0 +1,42 @@
+# --- Data (large binaries; never commit raw scans) ---
+data/raw_mri/*
+data/m2m/*
+data/external/*
+!data/**/.gitkeep
+
+# --- SimNIBS / simulation outputs (regenerable, large) ---
+results/**/*.msh
+results/**/*.hdf5
+results/**/*.nii
+results/**/*.nii.gz
+results/tdcs/*
+results/tms/*
+results/leadfield/*
+results/optimization/*
+!results/**/.gitkeep
+
+# Keep tracked: extracted metric tables + figures
+!results/roi_metrics/**/*.csv
+!results/group/**/*.csv
+!results/group/**/*.json
+!results/figures/**/*.png
+!results/figures/**/*.pdf
+!results/figures/**/*.svg
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+
+# --- Private / local only (never push) ---
+.claude/
+CLAUDE_CODE_PROMPTS.md
+*.docx
+~$*.docx
