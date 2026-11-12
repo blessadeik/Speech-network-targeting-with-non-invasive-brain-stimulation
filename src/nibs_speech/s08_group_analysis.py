@@ -1,4 +1,6 @@
-"""s08 — group-level analysis and figures across all subjects.
+# NOTE v0.2: descriptive pooling only. The preregistered Models A to G (log metrics, Holm,
+# TOST, bootstrap CV ratio, head versions) are implemented in Stage 11 (analysis/models.py).
+"""s08: group-level analysis and figures across all subjects.
 
     python src/nibs_speech/s08_group_analysis.py            # (no SimNIBS needed here)
 
@@ -131,7 +133,7 @@ def draft_figures(df: pd.DataFrame, cov: pd.DataFrame, fig_dir: Path) -> None:
             sns.violinplot(data=g, x="condition", y="value", cut=0, inner="quartile")
             plt.xticks(rotation=45, ha="right")
             plt.ylabel("peak |E| (V/m)")
-            plt.title(f"On-target peak E-field — {roi}")
+            plt.title(f"On-target peak E-field: {roi}")
             plt.tight_layout()
             plt.savefig(fig_dir / f"fig_peakE_{roi}.png", dpi=150)
             plt.close()

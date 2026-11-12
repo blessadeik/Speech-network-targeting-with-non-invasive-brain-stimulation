@@ -1,115 +1,126 @@
-"""s05 — leadfield-based tDCS montage optimization for one head.
+"""s05: leadfield-based tDCS optimization per ROI, plus the electrode-budget (k) sweep.
 
-Two steps:
-  1. Compute a tDCS leadfield once per head (heavy):  --build-leadfield
-  2. Optimize montages per ROI from that leadfield:    (default)
+    simnibs_python src/nibs_speech/s05_optimize_tdcs.py --head ernie --build-leadfield
+    simnibs_python src/nibs_speech/s05_optimize_tdcs.py --head ernie                # optimized, k = 8
+    simnibs_python src/nibs_speech/s05_optimize_tdcs.py --head ernie --ksweep       # k = 2..12 + unconstrained
 
-    simnibs_python src/nibs_speech/s05_optimize_tdcs.py --subject ernie --build-leadfield
-    simnibs_python src/nibs_speech/s05_optimize_tdcs.py --subject ernie
+Objective: maximize the cortical-normal field over the ROI (unreachable target intensity),
+avoid the contralateral homolog, total 2 mA, 1 mA per electrode.
+Outputs: results/optimization/<head>/tdcs/<roi>/ and results/ksweep/<head>/<roi>/k<k>/
 
-Uses simnibs.opt_struct.TDCSoptimize with constraints from config/montages.yaml
-(optimization:). Writes optimized montage + predicted field to
-results/optimization/<subject>/tdcs/<roi>/.
-
-API-CHECK on first run: TDCSLEADFIELD + TDCSoptimize attribute names and the target
-specification (positions vs node index) in your SimNIBS version.
+The leadfield is interpolated to the middle GM surface by default in SimNIBS (API-CHECK), so
+optimized outputs are surface meshes; s07 reads them directly.
+Lesion-modeled ARC heads: the leadfield must be built with the lesion conductivity set.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from utils import (Subject, get_logger, load_montages, mni_to_subject,
-                   write_manifest, abspath, load_paths)
+from utils import (Subject, abspath, default_cond_set, get_logger, load_config,
+                   load_montages, load_paths, load_rois, roi_surface_mask, write_manifest,
+                   central_surface)
 
 log = get_logger("s05")
-MA_TO_A = 1e-3
+MA = 1e-3
 
 
-def leadfield_path(subj: Subject) -> Path:
-    return abspath(load_paths()["results"]["leadfield"]) / subj.subid
+def leadfield_dir(subj: Subject, cond_set: str | None) -> Path:
+    return abspath(load_paths()["results"]["leadfield"]) / subj.subid / (cond_set or "default")
 
 
-def build_leadfield(subj: Subject, electrode_set: str) -> Path:
-    from simnibs import run_simnibs, sim_struct  # lazy
-
-    lf_dir = leadfield_path(subj)
-    lf_dir.mkdir(parents=True, exist_ok=True)
+def build_leadfield(subj: Subject, ocfg: dict, cond_set: str | None) -> Path:
+    from simnibs import run_simnibs, sim_struct
+    from s03_run_tdcs_montages import apply_conductivity_set
+    d = leadfield_dir(subj, cond_set)
+    d.mkdir(parents=True, exist_ok=True)
     lf = sim_struct.TDCSLEADFIELD()
     lf.subpath = str(subj.m2m_dir)
-    lf.pathfem = str(lf_dir)
-    lf.eeg_cap = electrode_set          # API-CHECK: attribute may be eeg_cap / cap
-    log.info("Building tDCS leadfield for %s (electrode set %s) — this is slow.",
-             subj.subid, electrode_set)
+    lf.pathfem = str(d)
+    lf.eeg_cap = str(subj.m2m_dir / "eeg_positions" / f"{ocfg['electrode_set']}.csv")  # API-CHECK
+    e = ocfg["electrode"]
+    lf.electrode.shape = e["shape"]                     # API-CHECK electrode template attr
+    lf.electrode.dimensions = e["dimensions_mm"]
+    lf.electrode.thickness = e["thickness_mm"]
+    apply_conductivity_set(lf, cond_set)
+    log.info("Building leadfield for %s (%s): slow.", subj.subid, cond_set or "default")
     run_simnibs(lf)
-    write_manifest(lf_dir, {"stage": "s05_leadfield", "subject": subj.subid,
-                            "electrode_set": electrode_set})
-    return lf_dir
+    write_manifest(d, {"stage": "s05_leadfield", "head": subj.subid, "cond_set": cond_set,
+                       "cap": ocfg["electrode_set"], "electrode": e})
+    return d
 
 
-def find_leadfield_hdf(lf_dir: Path) -> Path:
-    hits = sorted(lf_dir.glob("*leadfield*.hdf5")) or sorted(lf_dir.glob("*.hdf5"))
+def find_hdf(d: Path) -> Path:
+    hits = sorted(d.glob("*leadfield*.hdf5")) or sorted(d.glob("*.hdf5"))
     if not hits:
-        raise FileNotFoundError(
-            f"No leadfield .hdf5 in {lf_dir}. Run with --build-leadfield first.")
+        raise FileNotFoundError(f"No leadfield in {d}; run --build-leadfield.")
     return hits[0]
 
 
-def optimize_roi(subj: Subject, roi_name: str, roi_cfg: dict, opt_cfg: dict, lf_hdf: Path):
-    from simnibs import opt_struct  # lazy
-
-    seed_sub = list(mni_to_subject(roi_cfg["mni_seed"], subj.m2m_dir))
-    out_dir = subj.result_dir("optimization").parent  # results/optimization/<sub>
-    out_dir = subj.result_dir("optimization") / "tdcs" / roi_name
+def optimize(subj, roi, centre, homolog_centre, radius, ocfg, hdf, out_dir: Path, k):
+    from simnibs import opt_struct
     out_dir.mkdir(parents=True, exist_ok=True)
-
     opt = opt_struct.TDCSoptimize()
-    opt.leadfield_hdf = str(lf_hdf)
+    opt.leadfield_hdf = str(hdf)
     opt.name = str(out_dir / "optimized")
-    opt.max_total_current = opt_cfg["max_total_current_mA"] * MA_TO_A
-    opt.max_individual_current = opt_cfg["max_individual_current_mA"] * MA_TO_A
-    opt.max_active_electrodes = int(opt_cfg["max_active_electrodes"])
-
-    target = opt.add_target()
-    target.positions = seed_sub                       # subject-space target coordinate
-    target.intensity = float(opt_cfg["target_intensity_Vm"])
-    target.radius = float(roi_cfg["radius_mm"])       # API-CHECK: attribute name
-
-    log.info("Optimizing tDCS for ROI %s -> %s", roi_name, out_dir)
-    opt.run()
-    write_manifest(out_dir, {"stage": "s05_tdcs_opt", "subject": subj.subid,
-                             "roi": roi_name, "constraints": opt_cfg})
+    opt.max_total_current = ocfg["max_total_current_mA"] * MA
+    opt.max_individual_current = ocfg["max_individual_current_mA"] * MA
+    if k is not None:
+        opt.max_active_electrodes = int(k)
+    t = opt.add_target()
+    t.positions = list(map(float, centre))
+    t.directions = ocfg["target_direction"]
+    t.intensity = float(ocfg["target_intensity_Vm"])
+    t.radius = float(radius)
+    a = opt.add_avoid()                                  # API-CHECK TDCSavoid attrs
+    a.positions = list(map(float, homolog_centre))
+    a.radius = float(radius)
+    a.weight = float(ocfg["avoid_homolog"]["weight"])
+    currents = opt.run()
+    rec = {"head": subj.subid, "roi": roi, "k": k,
+           "currents_A": None if currents is None else [float(c) for c in currents]}
+    (out_dir / "optimization.json").write_text(json.dumps(rec, indent=2))
+    write_manifest(out_dir, {"stage": "s05_tdcs_opt", **rec, "constraints": ocfg})
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--subject", required=True)
+    ap.add_argument("--head", "--subject", dest="head", required=True)
     ap.add_argument("--build-leadfield", action="store_true")
-    ap.add_argument("--roi", nargs="*", help="subset of ROIs to optimize")
+    ap.add_argument("--ksweep", action="store_true")
+    ap.add_argument("--roi", nargs="*")
+    ap.add_argument("--cond-set", default=None)
     args = ap.parse_args()
 
-    subj = Subject(args.subject)
+    subj = Subject(args.head)
     subj.require_headmodel()
-    cfg = load_montages()
-    opt_cfg = cfg["optimization"]
-    rois_all = __import__("utils").load_rois()["rois"]
-
+    cond_set = default_cond_set(args.head, args.cond_set)
+    ocfg = load_montages()["optimization"]
+    rois = load_rois()["rois"]
     if args.build_leadfield:
-        build_leadfield(subj, opt_cfg["electrode_set"])
-
-    lf_hdf = find_leadfield_hdf(leadfield_path(subj))
-    roi_names = args.roi or opt_cfg["run_for_rois"]
-    for roi_name in roi_names:
-        roi_cfg = rois_all[roi_name]
-        if -99 in (roi_cfg.get("mni_seed") or []):
-            log.warning("ROI %s placeholder coords; skipping.", roi_name)
-            continue
-        try:
-            optimize_roi(subj, roi_name, roi_cfg, opt_cfg, lf_hdf)
-        except Exception as exc:  # noqa: BLE001
-            log.error("tDCS optimize ROI %s FAILED: %s", roi_name, exc)
-    return 0
+        build_leadfield(subj, ocfg, cond_set)
+    hdf = find_hdf(leadfield_dir(subj, cond_set))
+    nodes = central_surface(subj)[0]
+    ks = load_config("ksweep")
+    fails = 0
+    for roi in (args.roi or ocfg["run_for_rois"]):
+        cfg = rois[roi]
+        _, info = roi_surface_mask(roi, cfg, subj, nodes)
+        _, hinfo = roi_surface_mask(roi, cfg, subj, nodes, homolog=True)
+        radius = cfg.get("radius_mm") or 10.0
+        tag = f"__{cond_set}" if cond_set else ""
+        runs = ([(k, subj.result_dir("ksweep") / f"{roi}{tag}" / f"k{k}") for k in ks["k_values"]]
+                + [(None, subj.result_dir("ksweep") / f"{roi}{tag}" / "kNone")]) if args.ksweep \
+            else [(ocfg["max_active_electrodes"], subj.result_dir("optimization") / "tdcs" / f"{roi}{tag}")]
+        for k, out in runs:
+            try:
+                optimize(subj, roi, info["center"], hinfo["center"], radius, ocfg, hdf, out, k)
+            except Exception as exc:  # noqa: BLE001
+                log.error("%s k=%s FAILED: %s", roi, k, exc)
+                fails += 1
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+# ARC lesion integration (Methods Protocol v0.2, section 4).
+lesion_tag: 20
+mask_space: T2                    # ARC masks were traced on T2
+register_with: charm_T2_to_T1     # API-CHECK where charm 4.6 stores this transform
+max_volume_change: 0.05
+label_image: label_prep/tissue_labeling_upsampled.nii.gz   # API-CHECK path
+brain_tags_to_override: [1, 2, 3] # WM, GM, CSF inside the lesion become the lesion tag
+counterfactual_fill: nearest_brain_label   # GM or WM
+roi_lesioned_threshold: 0.5       # ROI flagged if >= 50% nodes inside lesion

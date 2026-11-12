@@ -1,0 +1,25 @@
+# Conductivity sets (S/m). Defaults are SimNIBS 4.x isotropic values: API-CHECK by
+# printing the installed 4.6.0 table in Stage 1 and overwrite here if they differ.
+defaults:
+  WM: 0.126
+  GM: 0.275
+  CSF: 1.654
+  Scalp: 0.465
+  Eye: 0.5
+  Compact_bone: 0.008
+  Spongy_bone: 0.025
+  Blood: 0.6
+  Muscle: 0.16
+
+lesion_tag: 20                 # API-CHECK allowed custom tag; must match lesion.yaml
+sets:                          # applied to ARC lesion-modeled meshes only
+  lesion_csf: {lesion: 1.654}  # primary
+  lesion_0p5: {lesion: 0.5}
+  lesion_1p0: {lesion: 1.0}
+# counterfactual is a separate mesh (lesion filled with neighbouring GM/WM), not a set
+# dwi_informed: exploratory, elementwise from mean diffusivity (Stage 5 extension)
+
+gpc:                           # Stage 10, ranges from Saturnino et al. 2019 Table 1 (VERIFY)
+  heads: 6
+  loo_error_target: 0.01
+  tissues: [WM, GM, CSF, Scalp, Compact_bone, Spongy_bone]

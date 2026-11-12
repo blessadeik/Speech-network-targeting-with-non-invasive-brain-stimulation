@@ -1,17 +1,25 @@
 # Project paths (relative to repo root). Scripts resolve these via utils.load_paths().
 data:
-  raw_mri:  data/raw_mri        # input T1/T2 per subject
-  m2m:      data/m2m            # charm head models (m2m_<subject>)
-  external: data/external       # templates, downloaded atlases, coil files if custom
+  raw_mri:  data/raw_mri
+  m2m:      data/m2m
+  external: data/external
+  derived:  data/derived            # cohort.csv, matching, QC logs
 results:
-  tdcs:        results/tdcs
-  tms:         results/tms
-  leadfield:   results/leadfield
+  tdcs:         results/tdcs
+  tms:          results/tms
+  leadfield:    results/leadfield
   optimization: results/optimization
-  roi_metrics: results/roi_metrics
-  group:       results/group
-  figures:     results/figures
+  ksweep:       results/ksweep
+  roi_metrics:  results/roi_metrics
+  group:        results/group
+  figures:      results/figures
+  device:       results/device
 config:
-  rois:     config/rois.yaml
-  montages: config/montages.yaml
-  coils:    config/coils.yaml
+  rois:         config/rois.yaml
+  montages:     config/montages.yaml
+  coils:        config/coils.yaml
+  conductivity: config/conductivity.yaml
+  lesion:       config/lesion.yaml
+  ksweep:       config/ksweep.yaml
+  study:        config/study.yaml
+  versions:     config/analysis_versions.yaml

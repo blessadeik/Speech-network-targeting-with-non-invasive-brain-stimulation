@@ -1,4 +1,4 @@
-"""s01 — build a SimNIBS head model with charm.
+"""s01: build a SimNIBS head model with charm.
 
     simnibs_python src/nibs_speech/s01_make_headmodel.py \
         --subject ernie --t1 <path>/ernie_T1.nii.gz [--t2 <path>/ernie_T2.nii.gz]
@@ -22,7 +22,7 @@ from utils import Subject, abspath, get_logger, load_paths, write_manifest
 log = get_logger("s01")
 
 
-def run_charm(subid: str, t1: str, t2: str | None, force: bool) -> Path:
+def run_charm(subid: str, t1: str, t2: str | None, force: bool, forceqform: bool = False) -> Path:
     paths = load_paths()
     m2m_root = abspath(paths["data"]["m2m"])
     m2m_root.mkdir(parents=True, exist_ok=True)
@@ -31,7 +31,9 @@ def run_charm(subid: str, t1: str, t2: str | None, force: bool) -> Path:
     if t2:
         cmd.append(str(t2))
     if force:
-        cmd.append("--forceqform")  # API-CHECK: adjust to your charm flags; --forcerun etc.
+        cmd.append("--forcerun")    # overwrite an existing m2m folder
+    if forceqform:
+        cmd.append("--forceqform")  # only if qform/sform disagree (log the reason)
 
     log.info("Running: %s (cwd=%s)", " ".join(cmd), m2m_root)
     # charm writes m2m_<subid> into the CWD, so run it inside data/m2m.
@@ -44,7 +46,11 @@ def run_charm(subid: str, t1: str, t2: str | None, force: bool) -> Path:
     if not subj.m2m_dir.exists():
         raise RuntimeError(f"charm reported success but {subj.m2m_dir} missing.")
     write_manifest(subj.m2m_dir, {"stage": "s01_headmodel", "subject": subid,
-                                  "t1": str(t1), "t2": str(t2), "cmd": " ".join(cmd)})
+                                  "t1": str(t1), "t2": str(t2), "cmd": " ".join(cmd),
+                                  "head_info": subj.info})
+    ini = subj.m2m_dir / "charm.ini"
+    if not ini.exists():
+        log.warning("charm.ini not found in %s; copy the one used (prereg requires its hash).", subj.m2m_dir)
     report = subj.m2m_dir / "charm_report.html"
     log.info("Head model ready: %s", subj.m2m_dir)
     log.info("QC report (open in browser): %s", report if report.exists() else "(look for *_report.html)")
@@ -57,7 +63,8 @@ def main() -> int:
     ap.add_argument("--t1")
     ap.add_argument("--t2", default=None)
     ap.add_argument("--manifest", help="CSV with columns subject,t1,t2 for batch mode")
-    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--force", action="store_true", help="charm --forcerun")
+    ap.add_argument("--forceqform", action="store_true")
     args = ap.parse_args()
 
     if args.manifest:
@@ -66,7 +73,7 @@ def main() -> int:
         failures = []
         for r in rows:
             try:
-                run_charm(r["subject"], r["t1"], r.get("t2") or None, args.force)
+                run_charm(r["subject"], r["t1"], r.get("t2") or None, args.force, args.forceqform)
             except Exception as exc:  # noqa: BLE001
                 log.error("Subject %s FAILED: %s", r.get("subject"), exc)
                 failures.append(r.get("subject"))
@@ -77,7 +84,7 @@ def main() -> int:
 
     if not (args.subject and args.t1):
         ap.error("provide --subject and --t1 (or --manifest for batch)")
-    run_charm(args.subject, args.t1, args.t2, args.force)
+    run_charm(args.subject, args.t1, args.t2, args.force, args.forceqform)
     return 0
 
 

@@ -1,51 +1,64 @@
-# ROI definitions — the single source of truth for targets.
-# See docs/05_roi_definitions.md. Coordinates marked VERIFY must be replaced with
-# literature-sourced MNI values (with citations) BEFORE locking the preregistration.
-#
-# Each ROI is mapped from MNI to subject space via simnibs.mni2subject_coords, then
-# (optionally) intersected with HCP-MMP1 atlas labels on the central GM surface.
+# ROI definitions: single source of truth for targets (Methods Protocol v0.2, section 5).
+# Seeds are MNI152; mapped per head with simnibs.mni2subject_coords and evaluated on the
+# charm central GM surface (lh then rh). Items marked LOCK must be settled before OSF
+# registration; items marked API-CHECK are resolved in Stage 1 against SimNIBS 4.6.0.
 
 space: MNI152
-atlas: HCP_MMP1          # used where labels != null; LMC uses coordinate spheres only
-surface: central          # analyze on mid-cortical GM surface
-hemisphere: left          # target hemisphere (off-target = right homolog)
+atlas: HCP_MMP1            # API-CHECK: exact atlas name accepted by simnibs.subject_atlas
+surface: central
+hemisphere: left
 
 rois:
-  L_IFG:                  # Broca's area
-    label: "Left IFG (Broca's, pars opercularis + triangularis)"
-    mni_seed: [-48, 16, 18]        # VERIFY against aphasia-NIBS literature
-    radius_mm: 10
-    atlas_labels: ["L_44", "L_45"]  # intersect sphere with these HCP-MMP1 labels
-    clinical_note: "Canonical speech-production / articulatory-planning target."
+  L_IFG:
+    label: "Left IFG (pars opercularis + triangularis)"
+    definition: atlas                  # full labels, no sphere
+    atlas_labels: ["L_44", "L_45"]     # matched tolerantly against subject_atlas keys
+    homolog_labels: ["R_44", "R_45"]
+    mni_seed: null                     # centroid of labels is computed per head
+    radius_mm: null
+    alternate: {definition: sphere_at_label_centroid, radius_mm: 10}
+    provenance: "HCP-MMP1 (Glasser et al. 2016)"
 
-  L_pSTG:                 # Wernicke's area
-    label: "Left posterior STG (Wernicke's)"
-    mni_seed: [-54, -42, 12]       # VERIFY
-    radius_mm: 10
-    atlas_labels: ["L_A4", "L_A5", "L_STGa"]  # VERIFY label coverage of pSTG
-    clinical_note: "Auditory-linguistic comprehension / phonological feedback."
+  L_pSTG:
+    label: "Left posterior STG/STS"
+    definition: atlas
+    atlas_labels: ["L_A4", "L_A5", "L_STV", "L_PSL"]   # LOCK: choose from Ernie overlays (Stage 2)
+    homolog_labels: ["R_A4", "R_A5", "R_STV", "R_PSL"] # LOCK with the left set
+    mni_seed: null
+    radius_mm: null
+    alternate: {definition: sphere_at_label_centroid, radius_mm: 10}
+    provenance: "HCP-MMP1; label set locked from Ernie overlay review"
 
-  L_LMC_dorsal:           # dorsal laryngeal motor cortex — THE DIFFERENTIATOR
-    label: "Left dorsal laryngeal motor cortex (dLMC)"
-    mni_seed: [-99, -99, -99]      # VERIFY — fill from Brown 2008 / Dichter 2018 etc.
+  L_dLMC:
+    label: "Left dorsal laryngeal motor cortex"
+    definition: sphere
+    mni_seed: [-42, -16, 38]           # LOCK: confirm MNI (not Talairach) in source table
     radius_mm: 8
-    atlas_labels: null             # no dedicated HCP label; coordinate sphere only
-    clinical_note: "Cortical larynx control; speech-motor restoration target."
+    alternate: {definition: sphere, mni_seed: [-40, -5, 50], radius_mm: 8,
+                provenance: "Lu et al. 2022 functional localizer, n = 48"}
+    provenance: "Belyk, Eichert & McGettigan 2021, Phil Trans R Soc B 376:20200392"
 
-  L_LMC_ventral:          # ventral laryngeal motor cortex
-    label: "Left ventral laryngeal motor cortex (vLMC)"
-    mni_seed: [-99, -99, -99]      # VERIFY — fill from literature
+  L_vLMC:
+    label: "Left ventral laryngeal motor cortex"
+    definition: sphere
+    mni_seed: [-64, -4, 14]            # LOCK: same check as dLMC
     radius_mm: 8
-    atlas_labels: null
-    clinical_note: "Ventral larynx representation."
+    project_seed_to_gm: true           # lateral seed may land outside GM; log distance
+    alternate: {definition: sphere, mni_seed: [-58, -2, 20], radius_mm: 8,
+                provenance: "Eichert et al. 2020 Cereb Cortex, as cited in Brain Commun 2021"}
+    provenance: "Belyk, Eichert & McGettigan 2021"
 
-# Off-target / avoidance regions (metrics computed here too).
 avoidance:
-  contralateral_homologs: true     # auto-generate right-hemisphere mirror of each ROI
-  temporalis_region: true          # lateral temporal scalp/muscle proxy (TMS discomfort)
-  orbit_region: true               # eyes/orbit (anterior tDCS montages)
+  contralateral_homologs: true         # atlas ROIs use homolog_labels; spheres mirror x
+  eyes: {tissue_tag: 6, face_dependent: true}        # API-CHECK charm tag
+  local_muscle: {tissue_tag: 10, radius_mm: 50, face_dependent: true}
+  # local_muscle = muscle within 50 mm of the stimulation site (temporalis proxy)
 
-# Robustness pre-checks (docs/05).
 robustness:
-  seed_shifts_mm: [-5, 0, 5]
-  radii_mm: [8, 10, 12]
+  seed_shifts_mm: 5                    # +/- along x, y, z: 6 variants
+  radii_mm: [6, 8, 10, 12]
+  alternate_sources: true
+
+notes: >
+  Peripheral nerves are not segmented in SimNIBS; scalp, muscle and eye fields are
+  reported as proxies for peripheral exposure.

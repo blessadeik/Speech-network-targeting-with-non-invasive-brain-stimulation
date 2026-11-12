@@ -1,0 +1,6 @@
+# Which head version feeds which analysis (Methods Protocol v0.2, section 9).
+group_comparison:    {ARC: lesion, IXI: deface}
+face_offtarget:      {IXI: full, exemplars: [ernie], ARC: lesion_if_orbit_intact}
+healthy_only_models: {primary: full, sensitivity: deface}
+h7_defacing:         {IXI: [full, deface], paired: true}
+lesion_effect:       {ARC: [lesion, filled]}
