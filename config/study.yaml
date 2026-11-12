@@ -1,0 +1,24 @@
+# Study-level settings (OSF Prereg v0.2, Part 2).
+seed: 20261015
+simnibs_version: "4.6.0"
+cohorts:
+  ARC:
+    source: OpenNeuro
+    accession: ds004884            # LOCK: confirm accession, version, licence
+    n_confirmatory: 50
+    n_pilot: 3
+    strata: lesion_volume_tertile
+    versions: [lesion, filled]     # lesion-modeled and counterfactual meshes
+  IXI:
+    source: brain-development.org
+    licence: CC BY-SA 3.0
+    n_confirmatory: 50
+    n_pilot: 3
+    matching: {age_caliper_years: 3, sex: exact, replacement: false}
+    versions: [full, deface]
+    deface_tool: null              # set to ARC's tool after reading its README (Stage 3)
+  ATLAS:
+    optional: true
+    requires: ICPSR DUA (study 36684)
+exemplars: [ernie, MNI152, ernie_extended]
+head_id_format: "{cohort}-{subject}_{version}"   # e.g. IXI-012_full, ARC-M2001_lesion

@@ -37,6 +37,16 @@ __pycache__/
 
 # --- Private / local only (never push) ---
 .claude/
+CLAUDE.md
 CLAUDE_CODE_PROMPTS.md
+docs/
 *.docx
 ~$*.docx
+
+# --- v0.2 additions ---
+results/ksweep/*
+results/device/*
+!results/device/**/*.csv
+data/derived/*
+!data/derived/cohort.csv
+!data/derived/tms_grid_heads.txt

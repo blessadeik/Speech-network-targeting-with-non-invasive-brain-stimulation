@@ -1,221 +1,211 @@
-"""s07 — extract standardized ROI E-field metrics from simulation outputs.
+"""s07: extract preregistered ROI metrics from every simulation of one head.
 
-    simnibs_python src/nibs_speech/s07_extract_roi_metrics.py --subject ernie
+    simnibs_python src/nibs_speech/s07_extract_roi_metrics.py --head ernie
 
-Walks every simulation this subject has (tDCS montages, TMS grids, optimized runs), samples
-|E| (and the cortical-normal component) on the central GM surface, applies the ROI masks
-from s02, and writes ONE tidy long-format CSV — the atom of the whole analysis:
+Writes results/roi_metrics/<head>/metrics.csv in long format:
+  head, cohort, subject, group, version, modality, source, condition, roi, roi_variant,
+  pose, metric, value, units
 
-  results/roi_metrics/<subject>/metrics.csv
-  columns: subject, modality, condition, roi, metric, value, units
+Metrics (OSF Prereg v0.2, 3.2), area-weighted on the central GM surface:
+  median_E (primary), peak_E (99th pct), peak_E_999, normal_E_mean, focality_area_cm2,
+  offtarget_median_E / offtarget_peak_E (homolog), ratio_on_off (medians),
+  ratio_on_off_peak; face-dependent: eye_peak_E, muscle_local_peak_E (only if the head
+  version keeps the face); lesion_median_E (lesion-modeled ARC only).
 
-Metrics per (condition × ROI), matching docs/07_analysis_plan.md:
-  peak_E (99.9pct), median_E, focality_area_mm2, normal_E_mean,
-  and for each off-target region: offtarget_peak_E, ontarget_offtarget_ratio.
+Field source, in order: map_to_surf overlay (E_magn, E_normal) > surface mesh whose node
+count matches the central surface (optimizer outputs) > volume mesh, sampled from the
+nearest GM element and projected on surface normals.
 
-For TMS grids (many positions/orientations in one run) it reports the BEST orientation per
-ROI by peak_E and records which one.
-
-API-CHECK on first run: how E-field is stored in the output .msh (field name 'magnE' / 'E'),
-whether surface overlays exist, and the central-surface interpolation. All such logic lives
-in `sample_field_on_surface` so a version fix touches one function.
+v0.2 fixes: normal component was a placeholder equal to |E|; node areas were missing, so
+focality was a node count; 99.9th percentile on small ROIs equalled the max.
 """
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from utils import (Subject, get_logger, load_central_surface_nodes,
-                   write_manifest)
+from utils import (TAG, Subject, central_surface, get_logger, load_config, load_rois,
+                   weighted_quantile, write_manifest)
 
 log = get_logger("s07")
+MAGN_NAMES = ("E_magn", "magnE", "normE")
+NORMAL_NAMES = ("E_normal", "E_norm")
+VEC_NAMES = ("E",)
 
 
-# ---------------------------------------------------------------------------
-# Field sampling
-# ---------------------------------------------------------------------------
-def sample_field_on_surface(msh_file: Path, surf_nodes: np.ndarray):
-    """Return (magnE, normalE) sampled at each central-surface node.
-
-    Preference order:
-      1. If a surface overlay was produced (map_to_surf), read it directly.
-      2. Else read the volume mesh, crop to GM (tag 2), and interpolate node-nearest.
-
-    API-CHECK: field names and the interpolation API vary slightly by SimNIBS version.
-    """
-    from simnibs import read_msh  # lazy
-
-    mesh = read_msh(str(msh_file))
-    # crop to gray matter (tissue tag 2) for cortical field  (API-CHECK tag)
-    try:
-        gm = mesh.crop_mesh(2)
-    except Exception:
-        gm = mesh
-
-    field = _get_field(gm, ["magnE", "normE", "E_magn"])
-    magn = _as_node_scalar(gm, field)
-
-    # nearest-node interpolation from GM nodes to central-surface nodes
-    gm_nodes = np.asarray(gm.nodes.node_coord)
-    idx = _nearest_index(surf_nodes, gm_nodes)
-    magn_on_surf = magn[idx]
-
-    normal_on_surf = None
-    try:
-        evec = _get_field(gm, ["E"])            # vector E
-        evec_nodes = _as_node_vector(gm, evec)
-        # approximate cortical normal via central-surface local normal is nontrivial;
-        # here we return the projection magnitude placeholder. Refine with true surface
-        # normals if the normal-component analysis is used (API-CHECK / docs/07).
-        normal_on_surf = np.linalg.norm(evec_nodes[idx], axis=1)  # placeholder = |E|
-    except Exception:
-        pass
-    return magn_on_surf, normal_on_surf
-
-
-def _get_field(mesh, names):
+def _field(mesh, names):
     for nm in names:
         if nm in getattr(mesh, "field", {}):
-            return mesh.field[nm]
-    # some versions expose node_data / element_data lists
-    for container in ("nodedata", "elmdata"):
-        for fd in getattr(mesh, container, []) or []:
-            if getattr(fd, "field_name", None) in names:
-                return fd
-    raise KeyError(f"None of {names} found in mesh fields {list(getattr(mesh,'field',{}))}")
+            return np.asarray(mesh.field[nm].value)
+    return None
 
 
-def _as_node_scalar(mesh, field):
-    v = np.asarray(field.value if hasattr(field, "value") else field)
-    if v.shape[0] == mesh.nodes.nr:
-        return v.reshape(-1)
-    # element data -> average to nodes  (API-CHECK: use mesh.elm2node if available)
+def surface_fields(msh: Path, n_nodes: int, normals: np.ndarray, surf_nodes: np.ndarray):
+    """Return (magn, normal) per central-surface node, or raise."""
+    from simnibs import read_msh
+    overlay_dir = msh.parent / "subject_overlays"
+    overlay = overlay_dir / (msh.stem + "_central.msh")         # API-CHECK naming
+    if overlay.exists():
+        m = read_msh(str(overlay))
+        mag, nrm = _field(m, MAGN_NAMES), _field(m, NORMAL_NAMES)
+        if mag is not None and len(mag) == n_nodes:
+            return mag.reshape(-1), (None if nrm is None else nrm.reshape(-1))
+    m = read_msh(str(msh))
+    if m.nodes.nr == n_nodes:                                     # surface output
+        mag = _field(m, MAGN_NAMES)
+        vec = _field(m, VEC_NAMES)
+        if vec is not None and vec.shape[0] == n_nodes:
+            vec = vec.reshape(-1, 3)
+            return (np.linalg.norm(vec, axis=1) if mag is None else mag.reshape(-1),
+                    np.einsum("ij,ij->i", vec, normals))
+        if mag is not None:
+            return mag.reshape(-1), None
+    gm = m.crop_mesh(tags=[TAG["GM"]])                            # volume fallback
+    vec = _field(gm, VEC_NAMES)
+    if vec is None:
+        raise KeyError(f"No E field in {msh}")
+    from scipy.spatial import cKDTree
+    _, idx = cKDTree(np.asarray(gm.elements_baricenters().value)).query(surf_nodes)
+    v = vec.reshape(-1, 3)[idx]
+    return np.linalg.norm(v, axis=1), np.einsum("ij,ij->i", v, normals)
+
+
+def volume_tag_stats(msh: Path, tag: int, near=None, radius=None):
+    """Peak (99th) and median |E| in a volume tissue tag, optionally within radius of a point."""
+    from simnibs import read_msh
+    m = read_msh(str(msh))
     try:
-        return np.asarray(mesh.elmdata2nodedata(field).value).reshape(-1)
+        sub = m.crop_mesh(tags=[tag])
     except Exception:
-        return v.reshape(-1)
+        return None
+    mag = _field(sub, MAGN_NAMES)
+    if mag is None:
+        vec = _field(sub, VEC_NAMES)
+        if vec is None:
+            return None
+        mag = np.linalg.norm(vec.reshape(-1, 3), axis=1)
+    if near is not None:
+        bc = np.asarray(sub.elements_baricenters().value)
+        keep = np.linalg.norm(bc - np.asarray(near), axis=1) <= radius
+        mag = mag[keep]
+    if mag.size == 0:
+        return None
+    return float(np.percentile(mag, 99)), float(np.median(mag))
 
 
-def _as_node_vector(mesh, field):
-    v = np.asarray(field.value if hasattr(field, "value") else field)
-    if v.ndim == 1:
-        v = v.reshape(-1, 3)
-    return v
+def roi_metrics(magn, normal, areas, mask, homolog_mask, whole_p999):
+    w = areas[mask]
+    out = {"median_E": weighted_quantile(magn[mask], w, 0.5),
+           "peak_E": weighted_quantile(magn[mask], w, 0.99),
+           "peak_E_999": weighted_quantile(magn[mask], w, 0.999)}
+    if normal is not None and w.sum() > 0:
+        out["normal_E_mean"] = float(np.sum(normal[mask] * w) / w.sum())
+    hot = magn >= 0.5 * whole_p999
+    out["focality_area_cm2"] = float(areas[hot].sum() / 100.0)
+    if homolog_mask is not None and homolog_mask.any():
+        wh = areas[homolog_mask]
+        out["offtarget_median_E"] = weighted_quantile(magn[homolog_mask], wh, 0.5)
+        out["offtarget_peak_E"] = weighted_quantile(magn[homolog_mask], wh, 0.99)
+        out["ratio_on_off"] = out["median_E"] / out["offtarget_median_E"] if out["offtarget_median_E"] else np.nan
+        out["ratio_on_off_peak"] = out["peak_E"] / out["offtarget_peak_E"] if out["offtarget_peak_E"] else np.nan
+    return out
 
 
-def _nearest_index(query: np.ndarray, ref: np.ndarray) -> np.ndarray:
-    try:
-        from scipy.spatial import cKDTree
-        return cKDTree(ref).query(query)[1]
-    except Exception:
-        # O(NM) fallback
-        return np.array([int(np.argmin(np.linalg.norm(ref - q, axis=1))) for q in query])
-
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-def compute_metrics(magn: np.ndarray, roi_mask: np.ndarray,
-                    node_areas: np.ndarray | None) -> dict:
-    whole_p999 = np.percentile(magn, 99.9)
-    roi_vals = magn[roi_mask]
-    m = {
-        "peak_E": float(np.percentile(roi_vals, 99.9)) if roi_vals.size else float("nan"),
-        "median_E": float(np.median(roi_vals)) if roi_vals.size else float("nan"),
-    }
-    # focality: surface area with |E| >= 50% of whole-brain 99.9pct
-    thr = 0.5 * whole_p999
-    hot = magn >= thr
-    if node_areas is not None:
-        m["focality_area_mm2"] = float(node_areas[hot].sum())
-    else:
-        m["focality_area_mm2"] = float(hot.sum())  # node count proxy if areas unavailable
-    return m
-
-
-def find_result_meshes(subj: Subject) -> list[tuple[str, str, Path]]:
-    """Return (modality, condition, msh_path) for every simulation output found."""
-    found = []
-    tdcs_root = subj.result_dir("tdcs")
-    for msh in tdcs_root.rglob("*_scalar.msh"):
-        found.append(("tDCS", msh.parent.name, msh))
-    for msh in tdcs_root.rglob("*.msh"):
-        if "_scalar" not in msh.name:
-            continue
-    tms_root = subj.result_dir("tms")
-    for msh in tms_root.rglob("*.msh"):
-        cond = f"{msh.parent.parent.name}:{msh.parent.name}"  # roi:coil
-        found.append(("TMS", cond, msh))
-    opt_root = subj.result_dir("optimization")
-    for msh in opt_root.rglob("*.msh"):
-        found.append(("optimized", str(msh.relative_to(opt_root).parent), msh))
-    return found
+def find_sims(subj: Subject):
+    """Yield (modality, source, condition, roi_hint, pose, mesh_path, volume_mesh_or_None)."""
+    for msh in sorted(subj.result_dir("tdcs").glob("*/*.msh")):
+        cond = msh.parent.name
+        yield "tDCS", "fixed", cond, cond.split("__")[1], None, msh, msh
+    for msh in sorted(subj.result_dir("tms").glob("*/*/*/*.msh")):
+        roi, coil, mode = msh.parts[-4], msh.parts[-3], msh.parts[-2]
+        mpose = re.search(r"-(\d{4})", msh.stem)
+        yield "TMS", mode, f"{coil}__{mode}", roi, (int(mpose.group(1)) if mpose else None), msh, msh
+    opt = subj.result_dir("optimization")
+    for msh in sorted((opt / "tdcs").glob("*/*.msh")):
+        yield "tDCS", "optimized", f"optimized__{msh.parent.name}", msh.parent.name.split("__")[0], None, msh, None
+    for msh in sorted((opt / "tms").glob("*/*/*.msh")):
+        yield "TMS", "optimized", f"{msh.parent.name}__optimized", msh.parts[-3], None, msh, msh
+    for msh in sorted(subj.result_dir("ksweep").glob("*/k*/*.msh")):
+        yield "tDCS", "ksweep", msh.parent.name, msh.parts[-3].split("__")[0], None, msh, None
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--subject", required=True)
+    ap.add_argument("--head", "--subject", dest="head", required=True)
     args = ap.parse_args()
 
-    subj = Subject(args.subject)
+    subj = Subject(args.head)
     subj.require_headmodel()
-
-    mask_file = subj.result_dir("roi_metrics") / "roi_masks.npz"
-    if not mask_file.exists():
-        log.error("No ROI masks (%s). Run s02_define_rois.py first.", mask_file)
+    info = subj.info
+    out_dir = subj.result_dir("roi_metrics")
+    mf = out_dir / "roi_masks.npz"
+    if not mf.exists():
+        log.error("Run s02 first (%s missing).", mf)
         return 1
-    masks = dict(np.load(mask_file))
-    surf_nodes = load_central_surface_nodes(subj)
-    node_areas = None  # API-CHECK: compute per-node surface area for exact focality in mm^2
-
-    roi_names = [k for k in masks if not k.endswith("_offtarget")]
-    offtarget_map = {r: f"{r}_R_offtarget" for r in roi_names
-                     if f"{r}_R_offtarget" in masks}
-
-    sims = find_result_meshes(subj)
-    if not sims:
-        log.error("No simulation outputs found. Run s03/s04/s05/s06 first.")
-        return 1
-    log.info("Found %d simulation meshes.", len(sims))
+    masks = {k: v.astype(bool) for k, v in np.load(mf).items()}
+    nodes, areas, normals, _ = central_surface(subj)
+    rois_cfg = load_rois()
+    av = rois_cfg["avoidance"]
+    lesion_tag = int(load_config("lesion")["lesion_tag"])
+    centres = pd.read_csv(out_dir / "roi_centres.csv") if (out_dir / "roi_centres.csv").exists() else None
 
     rows = []
-    for modality, condition, msh in sims:
-        try:
-            magn, _ = sample_field_on_surface(msh, surf_nodes)
-        except Exception as exc:  # noqa: BLE001
-            log.error("Sampling failed for %s (%s): %s", condition, msh, exc)
+    base = {k: info.get(k) for k in ("cohort", "subject", "group", "version")}
+    n_sims = 0
+    for modality, source, cond, roi_hint, pose, msh, vol in find_sims(subj):
+        if "subject_overlays" in str(msh) or msh.name.endswith("_central.msh"):
             continue
-        for roi in roi_names:
-            mvals = compute_metrics(magn, masks[roi].astype(bool), node_areas)
-            for metric, value in mvals.items():
-                rows.append(dict(subject=subj.subid, modality=modality,
-                                 condition=condition, roi=roi, metric=metric,
-                                 value=value, units="V/m" if metric != "focality_area_mm2" else "mm2"))
-            # off-target + ratio
-            if roi in offtarget_map:
-                off = masks[offtarget_map[roi]].astype(bool)
-                off_peak = float(np.percentile(magn[off], 99.9)) if off.any() else float("nan")
-                rows.append(dict(subject=subj.subid, modality=modality, condition=condition,
-                                 roi=roi, metric="offtarget_peak_E", value=off_peak, units="V/m"))
-                ratio = mvals["peak_E"] / off_peak if off_peak else float("nan")
-                rows.append(dict(subject=subj.subid, modality=modality, condition=condition,
-                                 roi=roi, metric="ontarget_offtarget_ratio", value=ratio, units="ratio"))
+        try:
+            magn, normal = surface_fields(msh, len(nodes), normals, nodes)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Sampling failed %s: %s", msh, exc)
+            continue
+        n_sims += 1
+        whole = weighted_quantile(magn, areas, 0.999)
+        for key, mask in masks.items():
+            roi, variant = key.split("|")
+            if variant == "homolog":
+                continue
+            hm = masks.get(f"{roi}|homolog")
+            for metric, value in roi_metrics(magn, normal, areas, mask, hm, whole).items():
+                rows.append({**base, "head": args.head, "modality": modality, "source": source,
+                             "condition": cond, "roi": roi, "roi_variant": variant, "pose": pose,
+                             "stimulated_roi": roi_hint, "metric": metric, "value": value,
+                             "units": "cm2" if metric.endswith("cm2") else ("ratio" if metric.startswith("ratio") else "V/m")})
+        if vol is None:
+            continue
+        extra = {}
+        if info.get("face_metrics"):
+            e = volume_tag_stats(vol, av["eyes"]["tissue_tag"])
+            if e:
+                extra["eye_peak_E"], extra["eye_median_E"] = e
+            if centres is not None and roi_hint in set(centres.roi):
+                c = centres[(centres.roi == roi_hint) & (centres.variant == "primary")][["sx", "sy", "sz"]].values[0]
+                mu = volume_tag_stats(vol, av["local_muscle"]["tissue_tag"], near=c,
+                                      radius=av["local_muscle"]["radius_mm"])   # around the scalp site
+                if mu:
+                    extra["muscle_local_peak_E"], extra["muscle_local_median_E"] = mu
+        if info.get("version") == "lesion":
+            lz = volume_tag_stats(vol, lesion_tag)
+            if lz:
+                extra["lesion_peak_E"], extra["lesion_median_E"] = lz
+        for metric, value in extra.items():
+            rows.append({**base, "head": args.head, "modality": modality, "source": source,
+                         "condition": cond, "roi": roi_hint, "roi_variant": "na", "pose": pose,
+                         "stimulated_roi": roi_hint, "metric": metric, "value": value, "units": "V/m"})
 
-    out = subj.result_dir("roi_metrics") / "metrics.csv"
     df = pd.DataFrame(rows)
-    df.to_csv(out, index=False)
-    write_manifest(subj.result_dir("roi_metrics"),
-                   {"stage": "s07_metrics", "subject": subj.subid,
-                    "n_sims": len(sims), "n_rows": len(df)})
-    log.info("Wrote %d metric rows -> %s", len(df), out)
-    if df.empty:
-        log.warning("metrics.csv is EMPTY — check field sampling (API-CHECK in this file).")
-        return 1
-    return 0
+    df.to_csv(out_dir / "metrics.csv", index=False)
+    write_manifest(out_dir, {"stage": "s07_metrics", "head": args.head, "n_sims": n_sims,
+                             "n_rows": len(df), "head_info": info})
+    log.info("%d rows from %d simulations -> %s", len(df), n_sims, out_dir / "metrics.csv")
+    return 0 if len(df) else 1
 
 
 if __name__ == "__main__":
