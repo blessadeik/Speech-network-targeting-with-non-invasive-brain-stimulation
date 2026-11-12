@@ -53,8 +53,9 @@ def main() -> int:
         return 1
 
     from simnibs import opt_struct, sim_struct
+    # 4.6.0 has no simnibs.subject_atlas; atlas2subject is the API (utils.subject_atlas_masks)
     for name in ("sim_struct", "opt_struct", "run_simnibs", "mni2subject_coords",
-                 "subject_atlas", "read_msh", "mesh_io"):
+                 "atlas2subject", "read_msh", "mesh_io"):
         ok &= rec(f"simnibs.{name}", hasattr(simnibs, name), critical=True)
     checks = {
         "TDCSLEADFIELD": (sim_struct, ["eeg_cap", "electrode", "subpath", "pathfem", "cond", "interpolation"]),
@@ -85,16 +86,26 @@ def main() -> int:
     try:
         c = sim_struct.TDCSLIST().cond
         rec("default conductivities", True, ", ".join(f"{x.name}={x.value}" for x in c if x.name))
+        installed = {x.name: x.value for x in c if x.name}
+        alias = {"Eye": "Eye_balls"}
+        cfg = load_config("conductivity")["defaults"]
+        diff = {k: (v, installed.get(alias.get(k, k))) for k, v in cfg.items()
+                if installed.get(alias.get(k, k)) != v}
+        rec("conductivity.yaml matches installed", not diff, diff or "")
     except Exception as exc:  # noqa: BLE001
         rec("default conductivities", False, exc)
 
-    coil_dir = Path(simnibs.__file__).parent / "resources" / "coil_models"   # API-CHECK path
+    coil_dir = Path(simnibs.__file__).parent / "resources" / "coil_models"   # verified in 4.6.0 (searched recursively)
     files = {p.name for p in coil_dir.rglob("*") if p.suffix in (".ccd", ".tcd", ".nii", ".gz")} if coil_dir.exists() else set()
     rec("coil library", bool(files), coil_dir)
     for key, c in load_coils()["coils"].items():
         rec(f"coil {key}", c["fnamecoil"] in files, c["fnamecoil"] if c["fnamecoil"] in files
             else f"{c['fnamecoil']} not found; candidates: " + ", ".join(sorted(f for f in files if key.split('_')[0][:4].lower() in f.lower())[:6]))
-    rec("charm on PATH", shutil.which("charm") is not None, shutil.which("charm") or "")
+    charm = shutil.which("charm")
+    bundled = Path(sys.executable).resolve().parent.parent / "bin"     # <install>/bin (Windows)
+    rec("charm on PATH", charm is not None, charm or (
+        f"not on PATH; SimNIBS bin is {bundled}" if (bundled / "charm.cmd").exists()
+        else "not found; only needed for s01"))
     for name in ("rois", "montages", "coils", "conductivity", "lesion", "ksweep", "study", "paths"):
         try:
             load_config(name)
@@ -111,17 +122,40 @@ def main() -> int:
         cap = load_montages()["defaults"]["cap"]
         rec("eeg cap csv", (s.m2m_dir / "eeg_positions" / f"{cap}.csv").exists(), cap)
         rec("final_tissues.nii.gz", s.tissues_nii.exists())
-        rec("charm.ini in m2m", (s.m2m_dir / "charm.ini").exists())
+        rec("charm settings.ini in m2m", s.charm_settings.exists(), s.charm_settings.name)
         try:
-            atlas = simnibs.subject_atlas(load_rois()["atlas"], str(s.m2m_dir))
+            from utils import _atlas_mask, central_surface, subject_atlas_masks
+            atlas = subject_atlas_masks(s)
             keys = list(atlas)
-            rec("HCP_MMP1 atlas", True, f"{len(keys)} keys, e.g. {keys[:4]}")
+            n_nodes = len(central_surface(s)[0])
+            n_mask = len(next(iter(atlas.values())))
+            rec("HCP_MMP1 atlas", n_mask == n_nodes,
+                f"{len(keys)} keys, e.g. {keys[1:4]}; mask length {n_mask} vs surface {n_nodes}",
+                critical=True)
+            for roi, cfg in load_rois()["rois"].items():
+                if cfg.get("definition") != "atlas":
+                    continue
+                for key in ("atlas_labels", "homolog_labels"):
+                    labs = cfg.get(key) or []
+                    missing = [l for l in labs if l not in atlas]
+                    if not missing:
+                        n = int(_atlas_mask(atlas, labs, n_nodes).sum())
+                        rec(f"ROI {roi} {key}", True, f"{labs}: {n} nodes")
+                    else:
+                        rec(f"ROI {roi} {key}", False, f"not in atlas: {missing}")
         except Exception as exc:  # noqa: BLE001
-            rec("HCP_MMP1 atlas", False, exc)
+            ok &= rec("HCP_MMP1 atlas", False, exc, critical=True)
         try:
             import nibabel as nib, numpy as np
             tags = np.unique(np.asarray(nib.load(str(s.tissues_nii)).dataobj)).astype(int)
-            rec("tissue tags present", True, list(tags))
+            rec("tissue tags present", True, [int(t) for t in tags])
+            from utils import TAG
+            et = {t.name: int(t.value) for t in simnibs.ElementTags}
+            want = {"WM": "WM", "GM": "GM", "CSF": "CSF", "Bone": "BONE", "Scalp": "SCALP",
+                    "Eye": "EYE_BALLS", "Compact_bone": "COMPACT_BONE",
+                    "Spongy_bone": "SPONGY_BONE", "Blood": "BLOOD", "Muscle": "MUSCLE"}
+            bad = [k for k, v in want.items() if TAG[k] != et.get(v)]
+            rec("utils.TAG matches ElementTags", not bad, bad or "", critical=True)
         except Exception as exc:  # noqa: BLE001
             rec("tissue tags present", False, exc)
 

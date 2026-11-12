@@ -42,7 +42,11 @@ def _electrode(tdcs, channel: int, centre, spec: dict):
 
 
 def apply_conductivity_set(tdcs, set_name: str | None):
-    """Set the lesion-tag conductivity for lesion-modeled ARC meshes. API-CHECK."""
+    """Set the lesion-tag conductivity for lesion-modeled ARC meshes.
+
+    4.6.0: `.cond` on TDCSLIST/TMSLIST/TDCSLEADFIELD/TMSoptimize is a 1000-entry list of
+    COND indexed by tag-1; tags 13-99 are unused by ElementTags, so tag 20 is free.
+    """
     if not set_name:
         return
     cond_cfg = load_config("conductivity")
@@ -142,6 +146,7 @@ def main() -> int:
         S.pathfem = str(out_root / name)
         S.fields = "eEjJ"
         S.map_to_surf = True               # central-surface overlays used by s07
+        S.open_in_gmsh = False             # 4.6.0 default True opens a GUI per run
         try:
             placed = build(S, family, fam, roi, ctx, args.cond_set)
             log.info("tDCS %s on %s -> %s", name, args.head, S.pathfem)

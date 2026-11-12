@@ -48,9 +48,9 @@ def run_charm(subid: str, t1: str, t2: str | None, force: bool, forceqform: bool
     write_manifest(subj.m2m_dir, {"stage": "s01_headmodel", "subject": subid,
                                   "t1": str(t1), "t2": str(t2), "cmd": " ".join(cmd),
                                   "head_info": subj.info})
-    ini = subj.m2m_dir / "charm.ini"
+    ini = subj.charm_settings
     if not ini.exists():
-        log.warning("charm.ini not found in %s; copy the one used (prereg requires its hash).", subj.m2m_dir)
+        log.warning("%s not found; copy the charm settings used (prereg requires its hash).", ini)
     report = subj.m2m_dir / "charm_report.html"
     log.info("Head model ready: %s", subj.m2m_dir)
     log.info("QC report (open in browser): %s", report if report.exists() else "(look for *_report.html)")

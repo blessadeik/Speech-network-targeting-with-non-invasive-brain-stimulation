@@ -45,27 +45,34 @@ def main() -> int:
     out = subj.result_dir("optimization") / "tms" / args.roi / args.coil
     out.mkdir(parents=True, exist_ok=True)
     opt = opt_struct.TMSoptimize()
-    opt.subpath = str(subj.m2m_dir)                      # API-CHECK (fnamehead vs subpath)
+    opt.subpath = str(subj.m2m_dir)                      # 4.6.0 derives fnamehead from subpath
     opt.pathfem = str(out)
     opt.fnamecoil = coil["fnamecoil"]
     opt.target = list(map(float, info["center"]))
-    opt.target_size = float(roi_cfg.get("radius_mm") or 10.0)   # API-CHECK
+    opt.target_size = float(roi_cfg.get("radius_mm") or 10.0)   # a radius in mm (4.6.0)
+    opt.open_in_gmsh = False                             # 4.6.0 default True opens a GUI
     opt.distance = cfg["defaults"]["coil_to_scalp_mm"]
     opt.search_radius = ocfg["search_radius_mm"]
     opt.spatial_resolution = ocfg["spatial_resolution_mm"]
     opt.search_angle = ocfg["search_angle_deg"]
     opt.angle_resolution = ocfg["angle_resolution_deg"]
-    opt.method = ocfg.get("method", "direct")            # API-CHECK: 'ADM' availability
-    apply_conductivity_set(opt, cond_set)                # API-CHECK: TMSoptimize.cond
+    # 4.6.0 accepts 'direct' or 'ADM'; ADM needs a dipole-based coil (.ccd is dipole-based)
+    opt.method = ocfg.get("method", "direct")
+    apply_conductivity_set(opt, cond_set)                # TMSoptimize.cond is a COND list (4.6.0)
     try:
         best = opt.run()
     except Exception as exc:  # noqa: BLE001
         log.error("TMSoptimize FAILED: %s", exc)
         return 1
-    if best is not None:
-        np.save(out / "best_matsimnibs.npy", np.asarray(best, dtype=float))
-    else:
-        log.warning("run() returned no matrix; parse the optimized .geo/.msh (API-CHECK).")
+    # 4.6.0: run() returns shape (return_n_max, 4, 4), best first. Save the single 4x4
+    # matrix; s04 rotates it as a 4x4 and would silently mis-index a (1, 4, 4) array.
+    best = np.asarray(best, dtype=float)
+    if best.ndim == 3:
+        best = best[0]
+    if best.shape != (4, 4):
+        log.error("Unexpected TMSoptimize result shape %s", best.shape)
+        return 1
+    np.save(out / "best_matsimnibs.npy", best)
     write_manifest(out, {"stage": "s06_tms_opt", "head": args.head, "roi": args.roi,
                          "coil": args.coil, "cond_set": cond_set, "config": ocfg})
     return 0

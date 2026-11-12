@@ -4,7 +4,7 @@
 # registration; items marked API-CHECK are resolved in Stage 1 against SimNIBS 4.6.0.
 
 space: MNI152
-atlas: HCP_MMP1            # API-CHECK: exact atlas name accepted by simnibs.subject_atlas
+atlas: HCP_MMP1            # accepted by simnibs.atlas2subject (4.6.0: a2009s, DK40, HCP_MMP1)
 surface: central
 hemisphere: left
 
@@ -12,7 +12,7 @@ rois:
   L_IFG:
     label: "Left IFG (pars opercularis + triangularis)"
     definition: atlas                  # full labels, no sphere
-    atlas_labels: ["L_44", "L_45"]     # matched tolerantly against subject_atlas keys
+    atlas_labels: ["L_44", "L_45"]     # keys from utils.subject_atlas_masks ('L_'/'R_' + HCP name)
     homolog_labels: ["R_44", "R_45"]
     mni_seed: null                     # centroid of labels is computed per head
     radius_mm: null
@@ -50,7 +50,7 @@ rois:
 
 avoidance:
   contralateral_homologs: true         # atlas ROIs use homolog_labels; spheres mirror x
-  eyes: {tissue_tag: 6, face_dependent: true}        # API-CHECK charm tag
+  eyes: {tissue_tag: 6, face_dependent: true}        # EYE_BALLS = 6 in 4.6.0 ElementTags
   local_muscle: {tissue_tag: 10, radius_mm: 50, face_dependent: true}
   # local_muscle = muscle within 50 mm of the stimulation site (temporalis proxy)
 

@@ -5,7 +5,7 @@
 
 defaults:
   reference_current_mA: 2.0
-  cap: EEG10-10_UI_Jurak_2007          # API-CHECK name in m2m/eeg_positions
+  cap: EEG10-10_UI_Jurak_2007          # verified in m2m_ernie/eeg_positions (4.6.0)
   pad: {shape: rect, dimensions_mm: [50, 70], thickness_mm: 5}
   hd: {shape: ellipse, dimensions_mm: [10, 10], thickness_mm: 5}
   report_per_mA: true
@@ -40,5 +40,5 @@ optimization:
   max_active_electrodes: 8
   target_direction: normal
   target_intensity_Vm: 1.0              # deliberately unreachable => optimizer maximizes
-  avoid_homolog: {weight: 1000}         # API-CHECK TDCSavoid attributes
+  avoid_homolog: {weight: 1000}         # TDCSavoid positions/radius/weight verified (4.6.0)
   run_for_rois: [L_IFG, L_pSTG, L_dLMC, L_vLMC]
