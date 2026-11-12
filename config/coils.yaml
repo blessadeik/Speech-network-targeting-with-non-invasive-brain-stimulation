@@ -1,20 +1,20 @@
-# TMS coils (Methods Protocol v0.2, section 7). Filenames API-CHECK in Stage 1.
+# TMS coils (Methods Protocol v0.2, section 7). Filenames verified in the 4.6.0 coil library.
 defaults:
   coil_to_scalp_mm: 4
   didt_A_per_us: 1.0
 
 coils:
   figure8:
-    fnamecoil: "MagVenture_MCF-B65.ccd"   # API-CHECK (.ccd vs .tcd in 4.6 coil library)
+    fnamecoil: "MagVenture_MCF-B65.ccd"   # present in 4.6.0 resources/coil_models
     type: figure8
     use_for: [L_IFG, L_pSTG, L_dLMC, L_vLMC]
   double_cone:
-    fnamecoil: "MagVenture_Cool-D-B80.ccd" # API-CHECK; must be a true double-cone coil
+    fnamecoil: "MagVenture_Cool-D-B80.ccd" # 4.6.0 Drakaki_BrainStim_2022 set; dipoles span 72 mm in z (angled wings, not flat)
     type: double_cone
     use_for: [L_dLMC, L_vLMC]
 
 optimization:                              # s06 TMSoptimize
-  method: ADM                              # API-CHECK; fall back to "direct"
+  method: ADM                              # 4.6.0: 'direct' or 'ADM' (ADM needs dipole coils, e.g. .ccd)
   search_radius_mm: 20
   spatial_resolution_mm: 4
   search_angle_deg: 360

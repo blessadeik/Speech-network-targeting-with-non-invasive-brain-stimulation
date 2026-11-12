@@ -67,6 +67,7 @@ def main() -> int:
     S.pathfem = str(out)
     S.fields = "eE"
     S.map_to_surf = True
+    S.open_in_gmsh = False                 # 4.6.0 default True opens a GUI per run
     tl = S.add_tmslist()
     tl.fnamecoil = coil["fnamecoil"]
     apply_conductivity_set(tl, cond_set)

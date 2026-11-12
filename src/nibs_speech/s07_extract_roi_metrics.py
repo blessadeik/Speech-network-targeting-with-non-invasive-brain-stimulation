@@ -50,7 +50,8 @@ def surface_fields(msh: Path, n_nodes: int, normals: np.ndarray, surf_nodes: np.
     """Return (magn, normal) per central-surface node, or raise."""
     from simnibs import read_msh
     overlay_dir = msh.parent / "subject_overlays"
-    overlay = overlay_dir / (msh.stem + "_central.msh")         # API-CHECK naming
+    # 4.6.0 middle_gm_interpolation writes subject_overlays/<mesh stem>_central.msh
+    overlay = overlay_dir / (msh.stem + "_central.msh")
     if overlay.exists():
         m = read_msh(str(overlay))
         mag, nrm = _field(m, MAGN_NAMES), _field(m, NORMAL_NAMES)

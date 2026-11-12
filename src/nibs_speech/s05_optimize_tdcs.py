@@ -8,13 +8,15 @@ Objective: maximize the cortical-normal field over the ROI (unreachable target i
 avoid the contralateral homolog, total 2 mA, 1 mA per electrode.
 Outputs: results/optimization/<head>/tdcs/<roi>/ and results/ksweep/<head>/<roi>/k<k>/
 
-The leadfield is interpolated to the middle GM surface by default in SimNIBS (API-CHECK), so
+The leadfield is interpolated to the middle GM surface by default in SimNIBS (TDCSLEADFIELD.interpolation =
+'middle gm', verified in 4.6.0), so
 optimized outputs are surface meshes; s07 reads them directly.
 Lesion-modeled ARC heads: the leadfield must be built with the lesion conductivity set.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -39,9 +41,10 @@ def build_leadfield(subj: Subject, ocfg: dict, cond_set: str | None) -> Path:
     lf = sim_struct.TDCSLEADFIELD()
     lf.subpath = str(subj.m2m_dir)
     lf.pathfem = str(d)
-    lf.eeg_cap = str(subj.m2m_dir / "eeg_positions" / f"{ocfg['electrode_set']}.csv")  # API-CHECK
+    # 4.6.0 accepts a full path (else resolves the name via SubjectFiles.get_eeg_cap)
+    lf.eeg_cap = str(subj.m2m_dir / "eeg_positions" / f"{ocfg['electrode_set']}.csv")
     e = ocfg["electrode"]
-    lf.electrode.shape = e["shape"]                     # API-CHECK electrode template attr
+    lf.electrode.shape = e["shape"]                     # single ELECTRODE template (4.6.0)
     lf.electrode.dimensions = e["dimensions_mm"]
     lf.electrode.thickness = e["thickness_mm"]
     apply_conductivity_set(lf, cond_set)
@@ -74,13 +77,21 @@ def optimize(subj, roi, centre, homolog_centre, radius, ocfg, hdf, out_dir: Path
     t.directions = ocfg["target_direction"]
     t.intensity = float(ocfg["target_intensity_Vm"])
     t.radius = float(radius)
-    a = opt.add_avoid()                                  # API-CHECK TDCSavoid attrs
+    a = opt.add_avoid()                                  # attrs verified in 4.6.0
     a.positions = list(map(float, homolog_centre))
     a.radius = float(radius)
     a.weight = float(ocfg["avoid_homolog"]["weight"])
-    currents = opt.run()
-    rec = {"head": subj.subid, "roi": roi, "k": k,
-           "currents_A": None if currents is None else [float(c) for c in currents]}
+    opt.open_in_gmsh = False                             # 4.6.0 default True opens a GUI
+    # 4.6.0: run() returns the output mesh path (name + ".msh"); the currents are written
+    # to name + ".csv" as rows "electrode,current_A" (TDCSoptimize.write_currents_csv).
+    fn_mesh = opt.run()
+    currents = {}
+    with open(str(opt.name) + ".csv", newline="") as fh:
+        for row in csv.reader(fh):
+            if len(row) >= 2:
+                currents[row[0]] = float(row[1])
+    rec = {"head": subj.subid, "roi": roi, "k": k, "mesh": str(fn_mesh),
+           "currents_A": currents}
     (out_dir / "optimization.json").write_text(json.dumps(rec, indent=2))
     write_manifest(out_dir, {"stage": "s05_tdcs_opt", **rec, "constraints": ocfg})
 

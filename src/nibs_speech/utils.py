@@ -26,7 +26,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
 
-# charm 4.x volume tissue tags (API-CHECK in Stage 1; surfaces are tag + 1000)
+# charm 4.x volume tissue tags; surfaces are tag + 1000. Verified against
+# simnibs.ElementTags in 4.6.0 (Stage 1): WM=1 ... MUSCLE=10, SCALP_TH_SURFACE=1005.
 TAG = {"WM": 1, "GM": 2, "CSF": 3, "Bone": 4, "Scalp": 5, "Eye": 6,
        "Compact_bone": 7, "Spongy_bone": 8, "Blood": 9, "Muscle": 10}
 SKIN_SURFACE_TAG = 1005
@@ -77,14 +78,20 @@ class Subject:
 
     @property
     def mesh(self) -> Path:
-        # FIX v0.2: charm 4.x writes <subid>.msh INSIDE m2m_<subid>/ (API-CHECK once).
+        # charm 4.x writes <subid>.msh INSIDE m2m_<subid>/ (verified on Ernie, 4.6.0).
         inside = self.m2m_dir / f"{self.subid}.msh"
         outside = self.m2m_dir.parent / f"{self.subid}.msh"
         return inside if inside.exists() or not outside.exists() else outside
 
     @property
     def tissues_nii(self) -> Path:
-        return self.m2m_dir / "final_tissues.nii.gz"      # API-CHECK
+        return self.m2m_dir / "final_tissues.nii.gz"      # verified on Ernie, 4.6.0
+
+    @property
+    def charm_settings(self) -> Path:
+        # charm 4.6 saves the settings it used as m2m/settings.ini
+        # (simnibs.SubjectFiles.settings); there is no charm.ini in m2m.
+        return self.m2m_dir / "settings.ini"
 
     def result_dir(self, kind: str) -> Path:
         d = abspath(self.paths["results"][kind]) / self.subid
@@ -181,14 +188,14 @@ def central_surface(subject: Subject):
     """Return (nodes Nx3, node_areas N, node_normals Nx3, hemi labels N) for lh then rh.
 
     FIX v0.2: the old loader globbed '*central*.gii' AND '*central*', which loaded every
-    file twice, so node arrays no longer matched subject_atlas masks. Order is now fixed
-    to lh, rh to match subject_atlas (API-CHECK that order once on Ernie).
+    file twice, so node arrays no longer matched atlas masks. Order is lh, rh, matching
+    subject_atlas_masks (verified on Ernie, 4.6.0: lh 154919 + rh 153872 nodes).
     """
     from simnibs import mesh_io
     surf_dir = subject.m2m_dir / "surfaces"
     nodes, areas, normals, hemi = [], [], [], []
     for h in ("lh", "rh"):
-        f = surf_dir / f"{h}.central.gii"                   # API-CHECK filename
+        f = surf_dir / f"{h}.central.gii"                   # verified on Ernie, 4.6.0
         if not f.exists():
             raise FileNotFoundError(f"Missing {f}. Check charm 4.6 surface layout.")
         m = mesh_io.read_gifti_surface(str(f))
@@ -214,7 +221,7 @@ def skin_surface_nodes(subject: Subject) -> np.ndarray:
     """
     from simnibs import read_msh
     mesh = read_msh(str(subject.mesh))
-    skin = mesh.crop_mesh(tags=[SKIN_SURFACE_TAG])          # API-CHECK signature
+    skin = mesh.crop_mesh(tags=[SKIN_SURFACE_TAG])          # verified on Ernie, 4.6.0
     return np.asarray(skin.nodes.node_coord)
 
 
@@ -225,7 +232,8 @@ def project_to_scalp(coord_xyz, subject: Subject, skin_nodes: np.ndarray | None 
 
 def eeg_positions(subject: Subject, cap: str) -> dict[str, np.ndarray]:
     """10-10 positions charm wrote for this head (m2m/eeg_positions/<cap>.csv)."""
-    f = subject.m2m_dir / "eeg_positions" / f"{cap}.csv"   # API-CHECK path/format
+    # Rows are "Electrode,x,y,z,label" (verified on Ernie, 4.6.0)
+    f = subject.m2m_dir / "eeg_positions" / f"{cap}.csv"
     out: dict[str, np.ndarray] = {}
     with open(f) as fh:
         for row in csv.reader(fh):
@@ -250,8 +258,34 @@ def nearest_eeg_label(point, positions: dict[str, np.ndarray], exclude=()) -> st
 # ---------------------------------------------------------------------------
 # ROI masks
 # ---------------------------------------------------------------------------
+def subject_atlas_masks(subject: Subject, atlas_name: str | None = None) -> dict[str, np.ndarray]:
+    """Atlas labels on the subject's central surface, as flat full-length (lh+rh) masks.
+
+    SimNIBS 4.6 has no `simnibs.subject_atlas`; the API is
+    `simnibs.atlas2subject(m2m, atlas, split_labels=True)`, which returns
+    {"lh": {name: mask_lh}, "rh": {name: mask_rh}} with bare names ('44', 'A4').
+    Here keys become 'L_<name>' / 'R_<name>' (Glasser HCP_MMP1 convention) and each mask
+    is padded to lh+rh length, matching central_surface() node order.
+    """
+    from simnibs import atlas2subject
+    atlas_name = atlas_name or load_rois().get("atlas", "HCP_MMP1")
+    per_hemi = atlas2subject(str(subject.m2m_dir), atlas_name, split_labels=True)
+    n_lh = len(next(iter(per_hemi["lh"].values())))
+    n_rh = len(next(iter(per_hemi["rh"].values())))
+    out: dict[str, np.ndarray] = {}
+    for h, prefix in (("lh", "L_"), ("rh", "R_")):
+        for name, m in per_hemi[h].items():
+            full = np.zeros(n_lh + n_rh, dtype=bool)
+            if h == "lh":
+                full[:n_lh] = m
+            else:
+                full[n_lh:] = m
+            out[prefix + name] = full
+    return out
+
+
 def _atlas_mask(atlas: dict, labels: list[str], n_nodes: int) -> np.ndarray:
-    """Union of atlas labels, matched tolerantly ('L_44' matches 'lh.L_44_ROI')."""
+    """Union of atlas labels, matched tolerantly ('L_44' matches 'L_44' or 'L_44_ROI')."""
     mask = np.zeros(n_nodes, dtype=bool)
     hits = []
     for key, val in atlas.items():
@@ -282,8 +316,7 @@ def roi_surface_mask(roi_name: str, roi_cfg: dict, subject: Subject,
     nodes = load_central_surface_nodes(subject) if nodes is None else nodes
     info: dict[str, Any] = {"roi": roi_name, "homolog": homolog}
     if roi_cfg["definition"] == "atlas" and not radius_mm:
-        from simnibs import subject_atlas
-        atlas = subject_atlas(load_rois().get("atlas", "HCP_MMP1"), str(subject.m2m_dir))
+        atlas = subject_atlas_masks(subject)
         labels = roi_cfg["homolog_labels"] if homolog else roi_cfg["atlas_labels"]
         mask = _atlas_mask(atlas, labels, len(nodes))
         info["center"] = nodes[mask].mean(axis=0)
@@ -377,7 +410,9 @@ def ring_points(center, u, v, radius: float, n: int = 4, phase_deg: float = 0.0)
 def rotate_matsimnibs(mat: np.ndarray, angle_deg: float) -> np.ndarray:
     """Rotate a SimNIBS coil matrix about its own z axis (column 2) by angle_deg.
 
-    matsimnibs columns: x, y (handle), z (into head), centre (API-CHECK convention).
+    matsimnibs columns: x, y (handle), z (into head), centre. Verified in 4.6.0
+    mesh_io.calc_matsimnibs: y = pos_ydir - centre, z = -skin normal, x = y cross z,
+    centre = skin point + distance * normal.
     """
     m = np.array(mat, dtype=float).copy()
     a = np.deg2rad(angle_deg)
