@@ -4,7 +4,7 @@ simnibs_version: "4.6.0"
 cohorts:
   ARC:
     source: OpenNeuro
-    accession: ds004884            # LOCK: confirm accession, version, licence
+    accession: ds004884            # LOCK: ds004884 vs ds004512 both cited; confirm the ID in the Sci Data paper (Stage 3)
     n_confirmatory: 50
     n_pilot: 3
     strata: lesion_volume_tertile
