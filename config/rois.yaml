@@ -32,7 +32,7 @@ rois:
   L_dLMC:
     label: "Left dorsal laryngeal motor cortex"
     definition: sphere
-    mni_seed: [-42, -16, 38]           # LOCK: confirm MNI (not Talairach) in source table
+    mni_seed: [-42, -16, 38]           # locked: MNI152, Belyk, Eichert & McGettigan 2021, Phil Trans R Soc B 376:20200392, Table 1
     radius_mm: 8
     alternate: {definition: sphere, mni_seed: [-40, -5, 50], radius_mm: 8,
                 provenance: "Lu et al. 2022 functional localizer, n = 48"}
@@ -41,7 +41,7 @@ rois:
   L_vLMC:
     label: "Left ventral laryngeal motor cortex"
     definition: sphere
-    mni_seed: [-64, -4, 14]            # LOCK: same check as dLMC
+    mni_seed: [-64, -4, 14]            # locked: MNI152, Belyk, Eichert & McGettigan 2021, Phil Trans R Soc B 376:20200392, Table 1
     radius_mm: 8
     project_seed_to_gm: true           # lateral seed may land outside GM; log distance
     alternate: {definition: sphere, mni_seed: [-58, -2, 20], radius_mm: 8,
